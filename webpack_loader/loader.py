@@ -37,21 +37,22 @@ class WebpackLoader(object):
             return self._assets[self.name]
         return self.load_assets()
 
-    def filter_chunks(self, chunks):
+    def filter_chunks(self, chunks, files):
         for chunk in chunks:
-            ignore = any(regex.match(chunk['name'])
+            ignore = any(regex.match(chunk)
                          for regex in self.config['ignores'])
             if not ignore:
-                chunk['url'] = self.get_chunk_url(chunk)
-                yield chunk
+                url = self.get_chunk_url(chunk, files)
+                yield { 'name': chunk, 'url': url }
 
-    def get_chunk_url(self, chunk):
-        public_path = chunk.get('publicPath')
+    def get_chunk_url(self, chunk, files):
+        chunk_file = files[chunk]
+        public_path = chunk_file.get('publicPath')
         if public_path:
             return public_path
 
         relpath = '{0}{1}'.format(
-            self.config['BUNDLE_DIR_NAME'], chunk['name']
+            self.config['BUNDLE_DIR_NAME'], chunk
         )
         return staticfiles_storage.url(relpath)
 
@@ -64,7 +65,7 @@ class WebpackLoader(object):
             timeout = self.config['TIMEOUT'] or 0
             timed_out = False
             start = time.time()
-            while assets['status'] == 'compiling' and not timed_out:
+            while (assets['status'] == 'compiling' or assets['status'] == 'compile') and not timed_out:
                 time.sleep(self.config['POLL_INTERVAL'])
                 if timeout and (time.time() - timeout > start):
                     timed_out = True
@@ -80,7 +81,14 @@ class WebpackLoader(object):
             chunks = assets['chunks'].get(bundle_name, None)
             if chunks is None:
                 raise WebpackBundleLookupError('Cannot resolve bundle {0}.'.format(bundle_name))
-            return self.filter_chunks(chunks)
+
+            for chunk in chunks:
+                asset = assets['assets'][chunk]
+                if asset is None:
+                    raise WebpackBundleLookupError('Cannot resolve asset {0}.'.format(chunk))
+
+            files = assets['assets']
+            return self.filter_chunks(chunks, files)
 
         elif assets.get('status') == 'error':
             if 'file' not in assets:
